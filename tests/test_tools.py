@@ -1,0 +1,517 @@
+"""Tests for CoinGlass MCP tools."""
+
+import pytest
+from unittest.mock import AsyncMock
+
+from coinglass_mcp.server import (
+    coinglass_market_info,
+    coinglass_market_data,
+    coinglass_price_history,
+    coinglass_oi_history,
+    coinglass_oi_distribution,
+    coinglass_funding_history,
+    coinglass_funding_current,
+    coinglass_long_short,
+    coinglass_liq_history,
+    coinglass_liq_orders,
+    coinglass_whale_positions,
+    coinglass_taker,
+    coinglass_indicators,
+    coinglass_search,
+    coinglass_config,
+    check_plan,
+    check_interval,
+    check_params,
+)
+from coinglass_mcp.client import CoinGlassClient
+
+
+def get_fn(tool):
+    """Extract function from FastMCP FunctionTool wrapper."""
+    return tool.fn if hasattr(tool, "fn") else tool
+
+
+class TestHelperFunctions:
+    """Test helper functions."""
+
+    def test_check_plan_passes_for_valid_plan(self, mock_context):
+        """check_plan passes when plan is sufficient."""
+        ctx = mock_context("standard")
+        # Should not raise
+        check_plan(ctx, "orders")
+
+    def test_check_plan_fails_for_insufficient_plan(self, mock_context):
+        """check_plan raises for insufficient plan."""
+        ctx = mock_context("hobbyist")
+        with pytest.raises(ValueError, match="requires standard plan"):
+            check_plan(ctx, "orders")
+
+    def test_check_interval_passes_for_valid_interval(self, mock_context):
+        """check_interval passes for allowed interval."""
+        ctx = mock_context("standard")
+        # Should not raise
+        check_interval(ctx, "m5")
+
+    def test_check_interval_fails_for_restricted_interval(self, mock_context):
+        """check_interval raises for restricted interval."""
+        ctx = mock_context("hobbyist")
+        with pytest.raises(ValueError, match="not available"):
+            check_interval(ctx, "m5")
+
+    def test_check_params_passes_with_required_params(self):
+        """check_params passes when all required params present."""
+        # Should not raise
+        check_params("pair", exchange="Binance", pair="BTCUSDT")
+
+    def test_check_params_fails_missing_params(self):
+        """check_params raises for missing required params."""
+        with pytest.raises(ValueError, match="requires parameters"):
+            check_params("pair", exchange="Binance", pair=None)
+
+
+class TestMarketTools:
+    """Test market tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_market_info_coins(self, setup_context, mock_response):
+        """coinglass_market_info returns coins list."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response(["BTC", "ETH", "SOL"])
+
+        fn = get_fn(coinglass_market_info)
+        result = await fn("coins", ctx=ctx)
+
+        assert result["success"] is True
+        assert result["action"] == "coins"
+        assert result["data"] == ["BTC", "ETH", "SOL"]
+        assert result["metadata"]["total"] == 3
+
+    async def test_market_info_exchanges(self, setup_context, mock_response):
+        """coinglass_market_info returns exchanges."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response({
+            "Binance": ["BTCUSDT"],
+            "OKX": ["BTCUSDT"],
+        })
+
+        fn = get_fn(coinglass_market_info)
+        result = await fn("exchanges", ctx=ctx)
+
+        assert result["success"] is True
+        assert result["action"] == "exchanges"
+        assert set(result["data"]) == {"Binance", "OKX"}
+
+    async def test_market_data_coins_summary(self, setup_context, mock_response):
+        """coinglass_market_data returns coins summary."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTC", "price": 50000},
+            {"symbol": "ETH", "price": 3000},
+        ])
+
+        fn = get_fn(coinglass_market_data)
+        result = await fn("coins_summary", ctx=ctx)
+
+        assert result["success"] is True
+        assert len(result["data"]) == 2
+
+    async def test_market_data_with_symbol_filter(self, setup_context, mock_response):
+        """coinglass_market_data filters by symbol."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTC", "price": 50000},
+            {"symbol": "ETH", "price": 3000},
+        ])
+
+        fn = get_fn(coinglass_market_data)
+        result = await fn("coins_summary", symbol="BTC", ctx=ctx)
+
+        assert result["success"] is True
+        assert len(result["data"]) == 1
+        assert result["data"][0]["symbol"] == "BTC"
+
+    async def test_price_history(self, setup_context, mock_response):
+        """coinglass_price_history returns OHLC data."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "o": 50000, "h": 51000, "l": 49000, "c": 50500},
+        ])
+
+        fn = get_fn(coinglass_price_history)
+        result = await fn(
+            exchange="Binance",
+            pair="BTCUSDT",
+            interval="h1",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "price_history"
+        assert result["metadata"]["exchange"] == "Binance"
+
+    async def test_price_history_interval_check(self, setup_context, mock_response):
+        """coinglass_price_history checks interval restriction."""
+        ctx, mock_http = setup_context("hobbyist")
+
+        fn = get_fn(coinglass_price_history)
+        with pytest.raises(ValueError, match="not available"):
+            await fn(
+                exchange="Binance",
+                pair="BTCUSDT",
+                interval="m5",  # Not available for hobbyist
+                ctx=ctx,
+            )
+
+
+class TestDerivativesTools:
+    """Test derivatives tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_oi_history_aggregated(self, setup_context, mock_response):
+        """coinglass_oi_history returns aggregated OI."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "o": 10000, "h": 11000, "l": 9000, "c": 10500},
+        ])
+
+        fn = get_fn(coinglass_oi_history)
+        result = await fn(
+            action="aggregated",
+            symbol="BTC",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "aggregated"
+
+    async def test_oi_history_pair_requires_params(self, setup_context):
+        """coinglass_oi_history pair action requires exchange+pair."""
+        ctx, _ = setup_context()
+
+        fn = get_fn(coinglass_oi_history)
+        with pytest.raises(ValueError, match="requires parameters"):
+            await fn(action="pair", ctx=ctx)
+
+    async def test_oi_distribution(self, setup_context, mock_response):
+        """coinglass_oi_distribution returns exchange breakdown."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"exchange": "Binance", "oi": 5000000000},
+            {"exchange": "OKX", "oi": 3000000000},
+        ])
+
+        fn = get_fn(coinglass_oi_distribution)
+        result = await fn(
+            action="by_exchange",
+            symbol="BTC",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+        assert len(result["data"]) == 2
+
+    async def test_funding_history(self, setup_context, mock_response):
+        """coinglass_funding_history returns funding OHLC."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "o": 0.0001, "h": 0.0002, "l": 0.0001, "c": 0.00015},
+        ])
+
+        fn = get_fn(coinglass_funding_history)
+        result = await fn(
+            action="oi_weighted",
+            symbol="BTC",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "oi_weighted"
+
+    async def test_funding_current_rates(self, setup_context, mock_response):
+        """coinglass_funding_current returns current rates."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTC", "rate": 0.0001},
+        ])
+
+        fn = get_fn(coinglass_funding_current)
+        result = await fn(action="rates", ctx=ctx)
+
+        assert result["success"] is True
+        assert result["action"] == "rates"
+
+    async def test_long_short(self, setup_context, mock_response):
+        """coinglass_long_short returns ratio data."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "longRatio": 0.52, "shortRatio": 0.48},
+        ])
+
+        fn = get_fn(coinglass_long_short)
+        result = await fn(
+            action="global",
+            exchange="Binance",
+            pair="BTCUSDT",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "global"
+
+
+class TestLiquidationTools:
+    """Test liquidation tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_liq_history(self, setup_context, mock_response):
+        """coinglass_liq_history returns liquidation data."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "longLiq": 1000000, "shortLiq": 500000},
+        ])
+
+        fn = get_fn(coinglass_liq_history)
+        result = await fn(
+            action="aggregated",
+            symbol="BTC",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+
+    async def test_liq_orders_requires_plan(self, setup_context):
+        """coinglass_liq_orders requires standard+ plan."""
+        ctx, _ = setup_context("hobbyist")
+
+        fn = get_fn(coinglass_liq_orders)
+        with pytest.raises(ValueError, match="requires standard plan"):
+            await fn(ctx=ctx)
+
+    async def test_liq_orders(self, setup_context, mock_response):
+        """coinglass_liq_orders returns order stream."""
+        ctx, mock_http = setup_context("standard")
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTC", "side": "long", "value": 100000},
+        ])
+
+        fn = get_fn(coinglass_liq_orders)
+        result = await fn(ctx=ctx)
+
+        assert result["success"] is True
+        assert result["action"] == "orders"
+
+
+class TestWhaleTools:
+    """Test whale tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="startup"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_whale_positions_requires_plan(self, mock_context, mock_http):
+        """coinglass_whale_positions requires startup+ plan."""
+        ctx = mock_context("hobbyist")
+        client = CoinGlassClient(http=mock_http, api_key="test")
+        ctx.request_context.lifespan_context["client"] = client
+
+        fn = get_fn(coinglass_whale_positions)
+        with pytest.raises(ValueError, match="requires startup plan"):
+            await fn(action="positions", ctx=ctx)
+
+    async def test_whale_positions(self, setup_context, mock_response):
+        """coinglass_whale_positions returns positions."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"user": "0x123", "symbol": "BTC", "size": 1000000},
+        ])
+
+        fn = get_fn(coinglass_whale_positions)
+        result = await fn(action="positions", ctx=ctx)
+
+        assert result["success"] is True
+
+
+class TestTakerTools:
+    """Test taker tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_taker_coin_history(self, setup_context, mock_response):
+        """coinglass_taker returns taker volume."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"t": 1700000000, "buyVol": 100, "sellVol": 80},
+        ])
+
+        fn = get_fn(coinglass_taker)
+        result = await fn(
+            action="coin_history",
+            symbol="BTC",
+            ctx=ctx,
+        )
+
+        assert result["success"] is True
+
+
+class TestIndicatorTools:
+    """Test indicator tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_fear_greed(self, setup_context, mock_response):
+        """coinglass_indicators returns fear & greed."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"date": "2024-01-01", "value": 75, "classification": "Greed"},
+        ])
+
+        fn = get_fn(coinglass_indicators)
+        result = await fn(action="fear_greed", ctx=ctx)
+
+        assert result["success"] is True
+        assert result["action"] == "fear_greed"
+
+    async def test_rsi(self, setup_context, mock_response):
+        """coinglass_indicators returns RSI data."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTC", "rsi": 65.5},
+        ])
+
+        fn = get_fn(coinglass_indicators)
+        result = await fn(action="rsi", ctx=ctx)
+
+        assert result["success"] is True
+
+
+class TestMetaTools:
+    """Test meta tools."""
+
+    @pytest.fixture
+    def setup_context(self, mock_context, mock_http, mock_response):
+        """Set up context with mock client."""
+
+        def _setup(plan="standard"):
+            ctx = mock_context(plan)
+            client = CoinGlassClient(http=mock_http, api_key="test")
+            ctx.request_context.lifespan_context["client"] = client
+            return ctx, mock_http
+
+        return _setup
+
+    async def test_search_finds_liquidation_tools(self, setup_context):
+        """coinglass_search finds relevant tools."""
+        ctx, _ = setup_context()
+
+        fn = get_fn(coinglass_search)
+        result = await fn(query="liquidation", ctx=ctx)
+
+        assert result["success"] is True
+        tool_names = [m["tool"] for m in result["data"]["matches"]]
+        assert any("liq" in name for name in tool_names)
+
+    async def test_search_finds_funding_tools(self, setup_context):
+        """coinglass_search finds funding tools."""
+        ctx, _ = setup_context()
+
+        fn = get_fn(coinglass_search)
+        result = await fn(query="funding rate arbitrage", ctx=ctx)
+
+        assert result["success"] is True
+        tool_names = [m["tool"] for m in result["data"]["matches"]]
+        assert any("funding" in name for name in tool_names)
+
+    async def test_config_exchanges(self, setup_context):
+        """coinglass_config returns exchange list."""
+        ctx, _ = setup_context()
+
+        fn = get_fn(coinglass_config)
+        result = await fn(action="exchanges", ctx=ctx)
+
+        assert result["success"] is True
+        assert "futures" in result["data"]
+        assert "spot" in result["data"]
+        assert "Binance" in result["data"]["futures"]
+
+    async def test_config_intervals(self, setup_context):
+        """coinglass_config returns intervals for plan."""
+        ctx, _ = setup_context("hobbyist")
+
+        fn = get_fn(coinglass_config)
+        result = await fn(action="intervals", ctx=ctx)
+
+        assert result["success"] is True
+        assert "h4" in result["data"]["your_plan"]
+        assert "m5" not in result["data"]["your_plan"]  # Not for hobbyist
+
+    async def test_config_plan_features(self, setup_context):
+        """coinglass_config returns plan features."""
+        ctx, _ = setup_context("standard")
+
+        fn = get_fn(coinglass_config)
+        result = await fn(action="plan_features", ctx=ctx)
+
+        assert result["success"] is True
+        assert result["data"]["plan"] == "standard"
+        assert "liq_orders" in result["data"]["features"]
