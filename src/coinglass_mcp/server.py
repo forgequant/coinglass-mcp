@@ -667,9 +667,9 @@ async def coinglass_long_short(
     client = get_client(ctx)
 
     endpoints = {
-        "global": "/api/futures/globalLongShortAccountRatio/history",
-        "top_accounts": "/api/futures/topLongShortAccountRatio/history",
-        "top_positions": "/api/futures/topLongShortPositionRatio/history",
+        "global": "/api/futures/global-long-short-account-ratio/history",
+        "top_accounts": "/api/futures/top-long-short-account-ratio/history",
+        "top_positions": "/api/futures/top-long-short-position-ratio/history",
         "taker_ratio": "/api/futures/taker-buy-sell-volume/exchange-list",
     }
 
@@ -1077,33 +1077,33 @@ async def coinglass_whale_positions(
 
 
 @mcp.tool(
-    name="coinglass_whale_index",
+    name="coinglass_bitfinex_longs_shorts",
     annotations={
-        "title": "CoinGlass Whale Index",
+        "title": "CoinGlass Bitfinex Margin",
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
 )
-async def coinglass_whale_index(
-    range: Annotated[
-        str, Field(description="Time range: 24h, 7d, 30d")
-    ] = "7d",
+async def coinglass_bitfinex_longs_shorts(
+    symbol: Annotated[
+        str, Field(description="Coin symbol (e.g., 'BTC', 'ETH')")
+    ] = "BTC",
     ctx: Context = None,
 ) -> dict:
-    """Get historical Whale Index values.
+    """Get Bitfinex margin long/short data.
 
-    The Whale Index measures aggregate whale activity and sentiment.
-    Higher values indicate increased whale activity.
+    Shows margin positions on Bitfinex exchange.
+    Useful for gauging sentiment among margin traders.
 
     Examples:
-        - 7-day whale index: range="7d"
-        - 30-day whale index: range="30d"
+        - BTC margin positions: symbol="BTC"
+        - ETH margin positions: symbol="ETH"
     """
     client = get_client(ctx)
-    data = await client.request("/api/index/whale-index", {"range": range})
-    return ok("whale_index", data, range=range)
+    data = await client.request("/api/bitfinex-margin-long-short", {"symbol": symbol})
+    return ok("bitfinex_margin", data, symbol=symbol)
 
 
 # ============================================================================
@@ -1167,7 +1167,7 @@ async def coinglass_taker(
     base = "/api/futures" if market == "futures" else "/api/spot"
     endpoints = {
         "pair_history": f"{base}/taker-buy-sell-volume/history",
-        "coin_history": f"{base}/taker-buy-sell-volume/aggregated-history",
+        "coin_history": f"{base}/aggregated-taker-buy-sell-volume/history",
         "by_exchange": f"{base}/taker-buy-sell-volume/exchange-list",
     }
 
@@ -1456,11 +1456,11 @@ async def coinglass_etf(
     base = f"/api/etf/{asset}"
     endpoints = {
         "list": f"{base}/list",
-        "flows": f"{base}/flows",
-        "net_assets": f"{base}/net-assets",
-        "premium": f"{base}/premium-discount",
+        "flows": f"{base}/flow-history",
+        "net_assets": f"{base}/net-assets/history",
+        "premium": f"{base}/premium-discount/history",
         "detail": f"{base}/detail",
-        "price": f"{base}/price",
+        "price": f"{base}/price/history",
     }
 
     params = {
@@ -1514,8 +1514,8 @@ async def coinglass_grayscale(
     client = get_client(ctx)
 
     endpoints = {
-        "holdings": "/api/grayscale/holdings",
-        "premium": "/api/grayscale/premium",
+        "holdings": "/api/grayscale/holdings-list",
+        "premium": "/api/grayscale/premium-history",
     }
 
     params = {"fund": fund, "range": range}
@@ -1601,22 +1601,22 @@ async def coinglass_indicators(
     client = get_client(ctx)
 
     endpoints = {
-        "rsi": "/api/indicator/rsi",
-        "basis": "/api/indicator/basis",
-        "coinbase_premium": "/api/indicator/coinbase-premium",
+        "rsi": "/api/futures/rsi/list",
+        "basis": "/api/futures/basis/history",
+        "coinbase_premium": "/api/coinbase-premium-index",
         "fear_greed": "/api/index/fear-greed-history",
         "ahr999": "/api/index/ahr999",
         "puell": "/api/index/puell-multiple",
-        "stock_flow": "/api/index/stock-to-flow",
-        "pi_cycle": "/api/index/pi-cycle-top",
-        "rainbow": "/api/index/rainbow-chart",
-        "bubble": "/api/index/bitcoin-bubble-index",
-        "ma_2year": "/api/index/two-year-ma-multiplier",
-        "ma_200week": "/api/index/two-hundred-week-ma-heatmap",
-        "profitable_days": "/api/index/bitcoin-profitable-days",
-        "stablecoin_mcap": "/api/index/stablecoin-market-cap",
-        "bull_peak": "/api/index/bull-market-peak-signals",
-        "borrow_rate": "/api/indicator/borrow-rate",
+        "stock_flow": "/api/index/stock-flow",
+        "pi_cycle": "/api/index/pi-cycle-indicator",
+        "rainbow": "/api/index/bitcoin/rainbow-chart",
+        "bubble": "/api/index/bitcoin/bubble-index",
+        "ma_2year": "/api/index/2-year-ma-multiplier",
+        "ma_200week": "/api/index/200-week-moving-average-heatmap",
+        "profitable_days": "/api/index/bitcoin/profitable-days",
+        "stablecoin_mcap": "/api/index/stableCoin-marketCap-history",
+        "bull_peak": "/api/bull-market-peak-indicator",
+        "borrow_rate": "/api/borrow-interest-rate/history",
     }
 
     params = {
@@ -1721,9 +1721,9 @@ async def coinglass_search(
             "actions": ["alerts", "positions", "all_positions"],
             "keywords": ["whale", "positions", "hyperliquid", "large traders"],
         },
-        "coinglass_whale_index": {
+        "coinglass_bitfinex_longs_shorts": {
             "actions": [],
-            "keywords": ["whale", "index"],
+            "keywords": ["bitfinex", "margin", "longs", "shorts"],
         },
         "coinglass_taker": {
             "actions": ["pair_history", "coin_history", "by_exchange"],
@@ -1751,12 +1751,14 @@ async def coinglass_search(
         },
         "coinglass_indicators": {
             "actions": [
-                "rsi", "basis", "fear_greed", "rainbow", "ahr999",
-                "puell", "stock_flow", "pi_cycle", "bubble",
+                "rsi", "basis", "coinbase_premium", "fear_greed", "ahr999",
+                "puell", "stock_flow", "pi_cycle", "rainbow", "bubble",
+                "ma_2year", "ma_200week", "profitable_days", "stablecoin_mcap",
+                "bull_peak", "borrow_rate",
             ],
             "keywords": [
                 "indicator", "rsi", "fear", "greed", "rainbow",
-                "cycle", "sentiment", "metric",
+                "cycle", "sentiment", "metric", "coinbase", "premium",
             ],
         },
     }
