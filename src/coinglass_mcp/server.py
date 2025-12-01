@@ -226,12 +226,12 @@ async def coinglass_market_data(
     action: Annotated[
         ActionMarketData,
         Field(
-            description="coins_summary: all coins metrics | pairs_summary: per-pair metrics | price_changes: price % changes across timeframes"
+            description="coins_summary: single coin metrics (requires symbol) | pairs_summary: per-pair metrics | price_changes: price % changes across timeframes"
         ),
     ],
     symbol: Annotated[
         str | None,
-        Field(description="Filter by coin symbol (e.g., 'BTC', 'ETH')"),
+        Field(description="Coin symbol - REQUIRED for coins_summary (e.g., 'BTC', 'ETH')"),
     ] = None,
     ctx: Context = None,
 ) -> dict:
@@ -240,12 +240,17 @@ async def coinglass_market_data(
     Returns aggregated market metrics including price, open interest, volume,
     and funding rates. Data is updated frequently (30 second cache).
 
+    Note: coins_summary requires symbol parameter.
+
     Examples:
-        - All coins overview: action="coins_summary"
-        - BTC metrics only: action="coins_summary", symbol="BTC"
+        - BTC metrics: action="coins_summary", symbol="BTC"
+        - All pairs: action="pairs_summary"
         - Price changes: action="price_changes"
     """
     client = get_client(ctx)
+
+    if action == "coins_summary" and not symbol:
+        raise ValueError("Action 'coins_summary' requires symbol parameter (e.g., symbol='BTC')")
 
     endpoints = {
         "coins_summary": "/api/futures/coins-markets",
@@ -253,12 +258,8 @@ async def coinglass_market_data(
         "price_changes": "/api/futures/price-change-list",
     }
 
-    data = await client.request(endpoints[action])
-
-    # Filter by symbol if provided
-    if symbol and isinstance(data, list):
-        symbol_upper = symbol.upper()
-        data = [d for d in data if d.get("symbol", "").upper() == symbol_upper]
+    params = {"symbol": symbol} if symbol else None
+    data = await client.request(endpoints[action], params)
 
     return ok(
         action,

@@ -113,33 +113,37 @@ class TestMarketTools:
         assert set(result["data"]) == {"Binance", "OKX"}
 
     async def test_market_data_coins_summary(self, setup_context, mock_response):
-        """coinglass_market_data returns coins summary."""
+        """coinglass_market_data returns coins summary for a symbol."""
         ctx, mock_http = setup_context()
-        mock_http.get.return_value = mock_response([
-            {"symbol": "BTC", "price": 50000},
-            {"symbol": "ETH", "price": 3000},
-        ])
-
-        fn = get_fn(coinglass_market_data)
-        result = await fn("coins_summary", ctx=ctx)
-
-        assert result["success"] is True
-        assert len(result["data"]) == 2
-
-    async def test_market_data_with_symbol_filter(self, setup_context, mock_response):
-        """coinglass_market_data filters by symbol."""
-        ctx, mock_http = setup_context()
-        mock_http.get.return_value = mock_response([
-            {"symbol": "BTC", "price": 50000},
-            {"symbol": "ETH", "price": 3000},
-        ])
+        mock_http.get.return_value = mock_response({"symbol": "BTC", "price": 50000})
 
         fn = get_fn(coinglass_market_data)
         result = await fn("coins_summary", symbol="BTC", ctx=ctx)
 
         assert result["success"] is True
-        assert len(result["data"]) == 1
-        assert result["data"][0]["symbol"] == "BTC"
+        assert result["data"]["symbol"] == "BTC"
+
+    async def test_market_data_coins_summary_requires_symbol(self, setup_context):
+        """coinglass_market_data coins_summary requires symbol."""
+        ctx, _ = setup_context()
+
+        fn = get_fn(coinglass_market_data)
+        with pytest.raises(ValueError, match="requires symbol"):
+            await fn("coins_summary", ctx=ctx)
+
+    async def test_market_data_pairs_summary(self, setup_context, mock_response):
+        """coinglass_market_data returns pairs summary."""
+        ctx, mock_http = setup_context()
+        mock_http.get.return_value = mock_response([
+            {"symbol": "BTCUSDT", "price": 50000},
+            {"symbol": "ETHUSDT", "price": 3000},
+        ])
+
+        fn = get_fn(coinglass_market_data)
+        result = await fn("pairs_summary", ctx=ctx)
+
+        assert result["success"] is True
+        assert len(result["data"]) == 2
 
     async def test_price_history(self, setup_context, mock_response):
         """coinglass_price_history returns OHLC data."""
