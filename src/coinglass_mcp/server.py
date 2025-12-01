@@ -22,14 +22,12 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from fastmcp import Context, FastMCP
-from fastmcp.server.middleware.caching import CallToolSettings, ResponseCachingMiddleware
 from pydantic import Field
 
 from coinglass_mcp.client import CoinGlassClient
 from coinglass_mcp.config import (
     ACTION_PARAMS,
     ACTION_PLAN,
-    CACHE_TTL,
     PLAN_FEATURES,
     PLAN_HIERARCHY,
     PLAN_INTERVALS,
@@ -77,13 +75,6 @@ Common patterns:
 
 Use coinglass_search(query="...") to discover available operations.""",
     lifespan=lifespan,
-)
-
-# Add response caching middleware with configurable TTL
-mcp.add_middleware(
-    ResponseCachingMiddleware(
-        call_tool_settings=CallToolSettings(ttl=CACHE_TTL),
-    )
 )
 
 
