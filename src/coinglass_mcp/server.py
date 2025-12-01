@@ -255,7 +255,7 @@ async def coinglass_market_data(
     endpoints = {
         "coins_summary": "/api/futures/coins-markets",
         "pairs_summary": "/api/futures/pairs-markets",
-        "price_changes": "/api/futures/price-change-list",
+        "price_changes": "/futures/price-change-list",
     }
 
     params = {"symbol": symbol} if symbol else None
